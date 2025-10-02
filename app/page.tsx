@@ -10,10 +10,13 @@ interface Message {
   id: string
   text: string
   sender: "user" | "bot"
-  timestamp: string
+  timestamp: string // This will now be set on the client for initial messages
 }
 
 // ✅ Updated: Calls our Next.js API route instead of dummy response
+// ... (The sendMessageToGemini function is unchanged, but included for context)
+
+// ... (Rest of sendMessageToGemini function)
 async function sendMessageToGemini(userMessage: string): Promise<string> {
   try {
     const res = await fetch("/api/chat", {
@@ -23,41 +26,57 @@ async function sendMessageToGemini(userMessage: string): Promise<string> {
     })
 
     if (!res.ok) {
-      throw new Error("Failed to fetch from API")
+        const errorData = await res.json();
+        throw new Error(errorData.reply || `API call failed with status ${res.status}.`);
     }
 
     const data = await res.json()
     return data.reply || "Sorry, I didn’t get that."
   } catch (error) {
     console.error("Error calling Gemini API:", error)
-    return "⚠️ Error: Could not connect to Gemini API."
+    return `⚠️ Error: ${(error as Error).message || "Could not connect to Gemini API."}`
   }
 }
 
+// Line 41: Renamed state for the initial message.
+const initialBotMessage: Message = {
+  id: "1",
+  text: "Hello! I'm Verdict AI. How can I assist you today?",
+  sender: "bot",
+  // Line 47: Changed initial timestamp to an empty string (rendered on server)
+  timestamp: "", 
+}
+
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      text: "Hello! I'm Verdict AI. How can I assist you today?",
-      sender: "bot",
-      timestamp: new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    },
-  ])
+  const [messages, setMessages] = useState<Message[]>([initialBotMessage])
   const [inputValue, setInputValue] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const [hasMounted, setHasMounted] = useState(false) // New state for hydration
+
+  const getCurrentTimestamp = () => {
+    return new Date().toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }
 
+  // Line 61-63: Set initial timestamp and mark as mounted only on the client
   useEffect(() => {
+    // Only run this once on the client after initial server render (hydration)
+    if (!hasMounted) {
+      setMessages(prev => prev.map(msg => 
+        msg.id === "1" ? {...msg, timestamp: getCurrentTimestamp()} : msg
+      ));
+      setHasMounted(true);
+    }
     scrollToBottom()
-  }, [messages])
+  }, [messages, hasMounted])
 
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isLoading) return
@@ -66,10 +85,8 @@ export default function ChatPage() {
       id: Date.now().toString(),
       text: inputValue,
       sender: "user",
-      timestamp: new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
+      // Line 80: Use the client-side helper function to get time for new messages
+      timestamp: getCurrentTimestamp(),
     }
 
     setMessages((prev) => [...prev, userMessage])
@@ -83,10 +100,8 @@ export default function ChatPage() {
         id: (Date.now() + 1).toString(),
         text: botResponse,
         sender: "bot",
-        timestamp: new Date().toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
+        // Line 94: Use the client-side helper function to get time for new messages
+        timestamp: getCurrentTimestamp(),
       }
 
       setMessages((prev) => [...prev, botMessage])
@@ -126,7 +141,9 @@ export default function ChatPage() {
               key={message.id}
               text={message.text}
               sender={message.sender}
-              timestamp={message.timestamp}
+              // Line 139: The ChatMessage component will render a blank timestamp 
+              // on the server, which is then hydrated by the client-side useEffect.
+              timestamp={message.timestamp} 
             />
           ))}
           {isLoading && (
